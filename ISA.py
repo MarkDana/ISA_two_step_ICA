@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# author: Kun's 2-step-CD matlab code, translated by haoyue@04/30/2022
+# author: Kun's 2-step-CD matlab code, translated by Haoyue Dai.
 # note that every step is fully deterministic, so all results and intermediate variables
 #   are suppose to be identical across matlab and python code.
 # however, there remains some inaccuracy due to data type precision used by matlab and python,
@@ -15,6 +15,7 @@
 
 import numpy as np
 import numba as nb
+from itertools import permutations
 
 @nb.njit('(int_[:,::1], float64[:,::1], int_, int_)')
 def get_pr(idx, r, mmax, n):
@@ -133,7 +134,7 @@ def adaptive_size(grad_new, grad_old, eta_old, z_old):
     eta[eta >= 0.03] = 0.03 # min(eta, 0.03)
     return eta, z
 
-def natural_grad_Adasize_Mask_regu(X, Mask, regu):
+def natural_grad_Adasize_Mask_regu(X, Mask, regu, init_W=None):
     N, T = X.shape
     mu = 3e-3 # 3e-3 # original matlab code: 3e-3
     itmax = 5000 # 10000 #18000 # 18000
@@ -141,13 +142,16 @@ def natural_grad_Adasize_Mask_regu(X, Mask, regu):
     num_edges = Mask.sum()
 
     # initilization of W
-    WW = np.eye(N, N)
-    for i in range(N):
-        Ind_i = np.where(Mask[i] != 0)[0]
-        X_Ind_i = X[Ind_i]
-        WW[i, Ind_i] = -0.5 * (X[i] @ X_Ind_i.T) @ np.linalg.pinv(X_Ind_i @ X_Ind_i.T)
-    W = 0.5 * (WW + WW.T)
-    W = W + np.diag(1 - np.diag(W))
+    if init_W is None:
+        WW = np.eye(N, N)
+        for i in range(N):
+            Ind_i = np.where(Mask[i] != 0)[0]
+            X_Ind_i = X[Ind_i]
+            WW[i, Ind_i] = -0.5 * (X[i] @ X_Ind_i.T) @ np.linalg.pinv(X_Ind_i @ X_Ind_i.T) # regress each Xi on unmasked nodes
+        W = 0.5 * (WW + WW.T)
+    else:
+        W = np.copy(init_W)
+    W[np.diag_indices(N)] = 1   # just to make sure
 
     z = np.zeros((N, N))
     eta = mu * np.ones_like(W)
@@ -185,13 +189,14 @@ def natural_grad_Adasize_Mask_regu(X, Mask, regu):
 
     return W, np.array(init_avg_gradient_curve), np.array(init_loss_curve)
 
-def sparseica_W_adasize_Alasso_mask_regu(lamda, Mask, X, regu):
+def sparseica_W_adasize_Alasso_mask_regu(lamda, Mask, X, regu, init_W=None):
     ''' ICA with SCAD penalized entries of the de-mixing matrix
     @param lamda: float, usually lamda is set to a constant times log(T), where T is sample size
     @param Mask: N*N 0 1 matrix, only updates the 1 entries on gradient
         in 2-step CD, if no mask, it's set to ones(N,N) - eye(N)
     @param X: data matrix in shape N*T, where N is the number of nodes, T is sample size. don't need to be whitened
     @param regu: float, e.g., 0.00, 0.002, 0.01, 0.05
+    @param init_W: N*N matrix, initial value of W (usually as None)
     @return:
     '''
     N, T = X.shape
@@ -203,15 +208,15 @@ def sparseica_W_adasize_Alasso_mask_regu(lamda, Mask, X, regu):
     num_edges = Mask.sum()
 
     # learning rate
-    mu = 1e-6 # 1e-6 # original matlab code: 1e-6
+    mu = 1e-3 # 1e-6
     beta = 0 # 1
     m = 60 # for approximate the derivative of |.|
-    itmax = 0 # i.e., now we don't use penal. 8000 # 10000 # 15000 # 15000 # 10000
+    itmax = 15000 # i.e., now we don't use penal. 8000 # 10000 # 15000 # 15000 # 10000
     Tol = 1e-6
 
     # initiliazation
     # print('Initialization....')
-    WW, init_avg_gradient_curve, init_loss_curve = natural_grad_Adasize_Mask_regu(XX, Mask, regu)
+    WW, init_avg_gradient_curve, init_loss_curve = natural_grad_Adasize_Mask_regu(XX, Mask, regu, init_W=init_W)
 
     omega1 = 1. / np.abs(WW[Mask != 0])
     # to avoid instability
@@ -282,23 +287,42 @@ def sparseica_W_adasize_Alasso_mask_regu(lamda, Mask, X, regu):
            np.array(penal_avg_gradient_curve), np.array(penal_loss_curve)
 
 
-if __name__ == '__main__':
-    nodenum = 5
-    samplesize = 2000
-    edgelist = [(0, 1), (1, 2), (2, 3), (3, 4)]
-    adjmat = np.zeros((nodenum, nodenum))
-    for pa, ch in edgelist: adjmat[ch, pa] = np.random.uniform(0.25, 1) * np.random.choice([-1, 1])
-    mixingmat = np.linalg.pinv(np.eye(nodenum) - adjmat)
-    E = np.random.uniform(low=np.random.uniform(-2, -1), high=np.random.uniform(1, 2), size=(nodenum, samplesize))
-    X = mixingmat @ E
-    print(np.round(adjmat, 2), end='\n\n')
+def from_W_to_B(W, tol=0.02, sparsify=True):
+    '''
+    find the best (row) permutation among nodes s.t. the system is stable. python codes translated by Minghao Fu.
+    @param W: the demixing matrix returned by the above `sparseica_W_adasize_Alasso_mask_regu`
+    @param tol: tolerance, for sparsity thresholding
+    @param sparsify: whether to set too small values in adjmat to 0
+    @return:
+        B: the adjacency matrix
+        perm: the nodes permutation
+    '''
+    dd = W.shape[0]
+    W_max = np.max(np.abs(W))
+    if sparsify:
+        W = W * (np.abs(W) >= W_max * tol)
 
-    N, T = X.shape
-    regu = 0.  # 0.05
-    Mask = np.ones((N, N))  # zero out the entries with no update
+    P_all = np.array(list(permutations(range(dd))))
+    Num_P = len(P_all)
+    EyeI = np.eye(dd)
 
-    y, W, WW, Score, \
-    init_avg_gradient_curve, init_loss_curve, \
-    penal_avg_gradient_curve, penal_loss_curve = sparseica_W_adasize_Alasso_mask_regu(np.log(T) * 4, Mask, X, regu)
+    Loop_strength_bk = np.inf
+    B, perm = None, None
+    for i in range(Num_P):
+        W_p = W[P_all[i], :]
+        if np.min(np.abs(np.diag(W_p))) != 0:
+            W_p1 = np.diag(1 / np.diag(W_p)) @ W_p
+            W_p2 = EyeI - W_p1
+            Loop_strength = 0
+            B_prod = W_p2
+            for jj in range(dd - 1):
+                B_prod = B_prod @ W_p2
+                Loop_strength += np.sum(np.abs(np.diag(B_prod)))
 
-    print(np.round(np.eye(N) - W, 2))   # or I-WW?
+            if Loop_strength < Loop_strength_bk:
+                Loop_strength_bk = Loop_strength
+                B = W_p2
+                perm = P_all[i]
+
+    return B, perm
+
