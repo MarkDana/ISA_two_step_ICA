@@ -21,7 +21,7 @@ def estimate(data, allowed_directed_edges=None, forbidden_directed_edges=None, i
 
     # 1. Hyper-parameters setting for sparseica_W_adasize_Alasso_mask_regu.
     num_nodes, samplesize = data.shape
-    ICA_lambda = np.log(samplesize) * 4  # usually lamda is set to a constant times log(T), where T is sample size.
+    ICA_lambda = 4  # usually lamda is set to a constant times log(T), where T is sample size.
     ICA_regu = 0. # 0.05
     stablize_tol = 0.25 # 0.02
     stablize_sparsify = True
@@ -42,7 +42,7 @@ def estimate(data, allowed_directed_edges=None, forbidden_directed_edges=None, i
                 ICA_Mask[ch, pa] = ICA_Mask[pa, ch] = 0
 
     # 3. Run 2-step ICA and get the estimated demixing matrix W.
-    _, W, _, _, _, _, _, _ = sparseica_W_adasize_Alasso_mask_regu(ICA_lambda, ICA_Mask, data, ICA_regu)
+    _, W, _, _, _, _, _, _ = sparseica_W_adasize_Alasso_mask_regu(ICA_lambda * np.log(samplesize), ICA_Mask, data, ICA_regu)
 
     # 4. Further process the estimated demixing matrix W so that the corresponding causal system is stable.
     adjacency_matrix, nodes_permutation = from_W_to_B(W, tol=stablize_tol, sparsify=stablize_sparsify)
@@ -64,7 +64,6 @@ def estimate(data, allowed_directed_edges=None, forbidden_directed_edges=None, i
 if __name__ == '__main__':
     import os
     from lingam.utils import make_dot
-
 
     sname = 'f18test'
     data = np.loadtxt('./f18test.csv', delimiter=',').T
