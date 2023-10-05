@@ -127,7 +127,7 @@ def estim_beta_pham(x):
 def adaptive_size(grad_new, grad_old, eta_old, z_old):
     alpha = 0 # 0.7
     up = 1.05 # 1.1 1.05
-    down = 0.8 # 0.4 0.5 0.34 0.5
+    down = 0.5 # 0.4 0.5 0.34 0.5 0.8
     z = grad_new + alpha * z_old
     etaup = (grad_new * grad_old) >= 0
     eta = eta_old * (up * etaup + down * (1 - etaup))
@@ -136,9 +136,9 @@ def adaptive_size(grad_new, grad_old, eta_old, z_old):
 
 def natural_grad_Adasize_Mask_regu(X, Mask, regu, init_W=None):
     N, T = X.shape
-    mu = 3e-3 # 3e-3 # original matlab code: 3e-3
-    itmax = 5000 # 10000 #18000 # 18000
-    Tol = 1e-6 # 1e-4, now smaller. otherwise early stopped
+    mu = 1e-3 # 3e-3 # 3e-3 # original matlab code: 3e-3
+    itmax = 6000 # 5000 # 10000 #18000 # 18000
+    Tol = 1e-4 # 1e-6 # 1e-4, now smaller. otherwise early stopped
     num_edges = Mask.sum()
 
     # initilization of W
@@ -211,8 +211,8 @@ def sparseica_W_adasize_Alasso_mask_regu(lamda, Mask, X, regu, init_W=None):
     mu = 1e-3 # 1e-6
     beta = 0 # 1
     m = 60 # for approximate the derivative of |.|
-    itmax = 15000 # i.e., now we don't use penal. 8000 # 10000 # 15000 # 15000 # 10000
-    Tol = 1e-6
+    itmax = 10000 # 15000 # i.e., now we don't use penal. 8000 # 10000 # 15000 # 15000 # 10000
+    Tol = 1e-4 # 1e-6
 
     # initiliazation
     # print('Initialization....')
@@ -246,7 +246,7 @@ def sparseica_W_adasize_Alasso_mask_regu(lamda, Mask, X, regu, init_W=None):
         penal_avg_gradient_curve.append(avg_gradient)
         if avg_gradient < Tol:
             if Refine:
-                Mask = np.abs(W) > 0.01
+                Mask = np.abs(W) > 0.02 # 0.01
                 Mask[np.diag_indices(N)] = 0
                 lamda = 0.
                 Refine = False
@@ -255,7 +255,7 @@ def sparseica_W_adasize_Alasso_mask_regu(lamda, Mask, X, regu, init_W=None):
 
         # update W: linear ICA with marginal score function estimated from data...
         argsort_y = np.argsort(y, axis=1)
-        if iter % 8 == 0:
+        if iter % 12 == 0: # iter % 8 == 0:
             y_psi = np.copy(estim_beta_pham(y))
             y_psi0 = np.take_along_axis(y_psi, argsort_y, axis=1)
         else:
@@ -287,7 +287,7 @@ def sparseica_W_adasize_Alasso_mask_regu(lamda, Mask, X, regu, init_W=None):
            np.array(penal_avg_gradient_curve), np.array(penal_loss_curve)
 
 
-def from_W_to_B(W, tol=0.02, sparsify=True):
+def from_W_to_B(W, tol=0.25, sparsify=True):
     '''
     find the best (row) permutation among nodes s.t. the system is stable. python codes translated by Minghao Fu.
     @param W: the demixing matrix returned by the above `sparseica_W_adasize_Alasso_mask_regu`
