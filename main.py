@@ -22,8 +22,8 @@ def estimate(data, allowed_directed_edges=None, forbidden_directed_edges=None, i
     # 1. Hyper-parameters setting for sparseica_W_adasize_Alasso_mask_regu.
     num_nodes, samplesize = data.shape
     ICA_lambda = np.log(samplesize) * 4  # usually lamda is set to a constant times log(T), where T is sample size.
-    ICA_regu = 0.05
-    stablize_tol = 0.02
+    ICA_regu = 0. # 0.05
+    stablize_tol = 0.25 # 0.02
     stablize_sparsify = True
 
     # 2. Set init Mask.
@@ -86,3 +86,19 @@ if __name__ == '__main__':
         d = make_dot(adjacency_matrix, labels=list(map(str, range(nodenum))))
         d.render(filename=sname, directory='./')
         os.system(f'rm -rf {os.path.join("./", sname)}')
+
+    # import pandas as pd
+    # # load csv file
+    # df = pd.read_csv('nasa_bearing_data_sample.csv')
+    # data = df.values.T
+    #
+    # # adjacency_matrix = estimate(data, init_mask_by_lasso=True)
+    # # d = make_dot(adjacency_matrix, labels=list(map(str, range(data.shape[0]))))
+    # # d.render(filename='nasa', directory='./')
+    # # os.system(f'rm -rf {os.path.join("./", "nasa")}')
+    #
+    # import seaborn as sns
+    # import matplotlib.pyplot as plt
+    # sns.pairplot(df)
+    # plt.savefig('nasa_scatter.png')
+
