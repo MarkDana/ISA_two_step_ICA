@@ -1,5 +1,9 @@
 .idea
 .DS_Store
+useless_tests
+forbid_edge.pdf
+no_knowledge.pdf
+ground_truth.pdf
 
 
 # Byte-compiled / optimized / DLL files
