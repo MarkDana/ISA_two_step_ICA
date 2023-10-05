@@ -65,40 +65,14 @@ if __name__ == '__main__':
     import os
     from lingam.utils import make_dot
 
-    nodenum = 5
-    samplesize = 2000
-    edgelist = [(3, 1), (1, 0), (0, 4), (4, 2)]
-    adjmat = np.zeros((nodenum, nodenum))
-    for pa, ch in edgelist: adjmat[ch, pa] = np.random.uniform(0.25, 1) * np.random.choice([-1, 1])
-    mixingmat = np.linalg.pinv(np.eye(nodenum) - adjmat)
-    E = np.random.uniform(low=np.random.uniform(-2, -1), high=np.random.uniform(1, 2), size=(nodenum, samplesize))
-    data = mixingmat @ E
 
-    settings = {
-        'ground_truth': {'truth': adjmat},
-        'no_knowledge': {'allowed': None, 'forbidden': None, 'init_lasso': True},
-        'forbid_edge': {'allowed': None, 'forbidden': [(1, 0)], 'init_lasso': False},
-    }
+    sname = 'f18test'
+    data = np.loadtxt('./f18test.csv', delimiter=',').T
+    nodenum = data.shape[0]
 
-    for sname, setting in settings.items():
-        adjacency_matrix = setting['truth'] if 'truth' in setting else estimate(data, setting['allowed'], setting['forbidden'], setting['init_lasso'])
-        print(f'=== {sname} ==='); print(np.round(adjacency_matrix, 2), end='\n\n')
-        d = make_dot(adjacency_matrix, labels=list(map(str, range(nodenum))))
-        d.render(filename=sname, directory='./')
-        os.system(f'rm -rf {os.path.join("./", sname)}')
-
-    # import pandas as pd
-    # # load csv file
-    # df = pd.read_csv('nasa_bearing_data_sample.csv')
-    # data = df.values.T
-    #
-    # # adjacency_matrix = estimate(data, init_mask_by_lasso=True)
-    # # d = make_dot(adjacency_matrix, labels=list(map(str, range(data.shape[0]))))
-    # # d.render(filename='nasa', directory='./')
-    # # os.system(f'rm -rf {os.path.join("./", "nasa")}')
-    #
-    # import seaborn as sns
-    # import matplotlib.pyplot as plt
-    # sns.pairplot(df)
-    # plt.savefig('nasa_scatter.png')
+    adjacency_matrix = estimate(data)
+    print(np.round(adjacency_matrix, 2), end='\n\n')
+    d = make_dot(adjacency_matrix, labels=list(map(str, range(nodenum))))
+    d.render(filename=sname, directory='./')
+    os.system(f'rm -rf {os.path.join("./", sname)}')
 
