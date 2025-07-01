@@ -16,6 +16,7 @@
 import numpy as np
 import numba as nb
 from itertools import permutations
+from scipy.optimize import linear_sum_assignment
 
 @nb.njit('(int_[:,::1], float64[:,::1], int_, int_)')
 def get_pr(idx, r, mmax, n):
@@ -287,42 +288,119 @@ def sparseica_W_adasize_Alasso_mask_regu(lamda, Mask, X, regu, init_W=None):
            np.array(penal_avg_gradient_curve), np.array(penal_loss_curve)
 
 
-def from_W_to_B(W, tol=0.02, sparsify=True):
+def from_W_to_B(W, tol=0.02, sparsify=True, assume_acyclic_to_prevent_permutations=False):
     '''
-    find the best (row) permutation among nodes s.t. the system is stable. python codes translated by Minghao Fu.
     @param W: the demixing matrix returned by the above `sparseica_W_adasize_Alasso_mask_regu`
     @param tol: tolerance, for sparsity thresholding
     @param sparsify: whether to set too small values in adjmat to 0
+    @param assume_acyclic_to_prevent_permutations:
+        if False (default), will find the best (row) permutation among nodes s.t. the system is stable.
+                            python codes translated by Minghao Fu. original matlab code by Kun Zhang.
+        if True (suitable for large number of nodes, e.g., >9 variables), will assume the system is acyclic,
+                            i.e., the adjacency matrix can be permuted to a lower triangular matrix.
+                            implementation is from https://github.com/cdt15/lingam/blob/master/lingam/ica_lingam.py
+        todo: there may also be a better way to find the stable permuation efficiently, instead of brute-force setting as acyclic.
     @return:
         B: the adjacency matrix
         perm: the nodes permutation
     '''
-    dd = W.shape[0]
-    W_max = np.max(np.abs(W))
-    if sparsify:
-        W = W * (np.abs(W) >= W_max * tol)
+    if not assume_acyclic_to_prevent_permutations:
+        dd = W.shape[0]
+        W_max = np.max(np.abs(W))
+        if sparsify:
+            W = W * (np.abs(W) >= W_max * tol)
 
-    P_all = np.array(list(permutations(range(dd))))
-    Num_P = len(P_all)
-    EyeI = np.eye(dd)
+        P_all = np.array(list(permutations(range(dd))))
+        Num_P = len(P_all)
+        EyeI = np.eye(dd)
 
-    Loop_strength_bk = np.inf
-    B, perm = None, None
-    for i in range(Num_P):
-        W_p = W[P_all[i], :]
-        if np.min(np.abs(np.diag(W_p))) != 0:
-            W_p1 = np.diag(1 / np.diag(W_p)) @ W_p
-            W_p2 = EyeI - W_p1
-            Loop_strength = 0
-            B_prod = W_p2
-            for jj in range(dd - 1):
-                B_prod = B_prod @ W_p2
-                Loop_strength += np.sum(np.abs(np.diag(B_prod)))
+        Loop_strength_bk = np.inf
+        B, perm = None, None
+        for i in range(Num_P):
+            W_p = W[P_all[i], :]
+            if np.min(np.abs(np.diag(W_p))) != 0:
+                W_p1 = np.diag(1 / np.diag(W_p)) @ W_p
+                W_p2 = EyeI - W_p1
+                Loop_strength = 0
+                B_prod = W_p2
+                # todo: determine whether to use such "loop strength" or spectral radius.
+                for jj in range(dd - 1):
+                    B_prod = B_prod @ W_p2
+                    Loop_strength += np.sum(np.abs(np.diag(B_prod)))
 
-            if Loop_strength < Loop_strength_bk:
-                Loop_strength_bk = Loop_strength
-                B = W_p2
-                perm = P_all[i]
+                if Loop_strength < Loop_strength_bk:
+                    Loop_strength_bk = Loop_strength
+                    B = W_p2
+                    perm = P_all[i]
+        return B, perm
 
-    return B, perm
+    else:
+        def _search_causal_order(matrix):
+            """Obtain a causal order from the given matrix strictly.
+
+            Parameters
+            ----------
+            matrix : array-like, shape (n_features, n_samples)
+                Target matrix.
+
+            Return
+            ------
+            causal_order : array, shape [n_features, ]
+                A causal order of the given matrix on success, None otherwise.
+            """
+            causal_order = []
+
+            row_num = matrix.shape[0]
+            original_index = np.arange(row_num)
+
+            while 0 < len(matrix):
+                # find a row all of which elements are zero
+                row_index_list = np.where(np.sum(np.abs(matrix), axis=1) == 0)[0]
+                if len(row_index_list) == 0:
+                    break
+
+                target_index = row_index_list[0]
+
+                # append i to the end of the list
+                causal_order.append(original_index[target_index])
+                original_index = np.delete(original_index, target_index, axis=0)
+
+                # remove the i-th row and the i-th column from matrix
+                mask = np.delete(np.arange(len(matrix)), target_index, axis=0)
+                matrix = matrix[mask][:, mask]
+
+            if len(causal_order) != row_num:
+                causal_order = None
+
+            return causal_order
+
+        # obtain a permuted W_ica
+        _, col_index = linear_sum_assignment(1 / np.abs(W))
+        PW_ica = np.zeros_like(W)
+        PW_ica[col_index] = W
+
+        # obtain a vector to scale
+        D = np.diag(PW_ica)[:, np.newaxis]
+
+        # estimate an adjacency matrix
+        W_estimate = PW_ica / D
+        B_estimate = np.eye(len(W_estimate)) - W_estimate
+
+        # set the m(m + 1)/2 smallest(in absolute value) elements of the matrix to zero
+        pos_list = np.argsort(np.abs(B_estimate), axis=None)
+        pos_list = np.vstack(np.unravel_index(pos_list, B_estimate.shape)).T
+        initial_zero_num = int(B_estimate.shape[0] * (B_estimate.shape[0] + 1) / 2)
+        for i, j in pos_list[:initial_zero_num]:
+            B_estimate[i, j] = 0
+
+        for i, j in pos_list[initial_zero_num:]:
+            causal_order = _search_causal_order(B_estimate)
+            if causal_order is not None:
+                break
+            else:
+                # set the smallest(in absolute value) element to zero
+                B_estimate[i, j] = 0
+
+        return B_estimate, None  # todo: perm is not used for now.
+
 
